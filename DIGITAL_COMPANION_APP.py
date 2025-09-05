@@ -1,9 +1,16 @@
-from auth_and_cache import (
-    signup_user,
-    login_user,
-    logout_user,
-    ContextCache
-)
+# Core modular imports
+from services.database_wrapper import database_service
+from services.auth_service import AuthService
+from services.activity_service import ActivityService
+from services.document_service import DocumentService
+from services.rag_service import RAGService
+from models.user import User, UserRole
+from models.activity import StudentActivity, ActivityType
+from ui.components import apply_role_theme, render_role_header, render_document_upload_section, render_user_info_sidebar
+from ui.parent_dashboard import render_parent_dashboard
+from ui.teacher_dashboard import render_teacher_dashboard
+import uuid
+import time
 
 
 import streamlit as st
@@ -80,10 +87,10 @@ except ImportError:
 
 # Configure Streamlit page
 st.set_page_config(
-    page_title="Advanced RAG Chatbot - Multi-User & Video Support",
-    page_icon="🤖",
+    page_title="AERO - AI Educational Assistant",
+    page_icon="🚀",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 
@@ -143,88 +150,44 @@ session_defaults = {
     'name': None,
     'authentication_status': None,
     'authenticator': None,  # Added for proper logout
-    'logout_clicked': False  # Added to track logout action
+    'logout_clicked': False,  # Added to track logout action
+    'current_user': None,  # New: current User object
+    'session_id': None,  # New: for activity tracking
+    'db_service': None,  # New: database service
+    'auth_service': None,  # New: auth service
+    'activity_service': None,  # New: activity service
+    'document_service': None,  # New: document service
+    'rag_service': None  # New: RAG service
 }
 
-for key, value in session_defaults.items():
-    if key not in st.session_state:
-        st.session_state[key] = value
+def initialize_session_state():
+    """Initialize session state and services"""
+    for key, value in session_defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+    # Initialize database and auth services
+    if st.session_state.db_service is None:
+        st.session_state.db_service = database_service
+
+    if st.session_state.auth_service is None:
+        st.session_state.auth_service = AuthService(st.session_state.db_service)
+
+    if st.session_state.activity_service is None:
+        st.session_state.activity_service = ActivityService(st.session_state.db_service)
+
+    if st.session_state.document_service is None:
+        st.session_state.document_service = DocumentService(st.session_state.db_service)
+
+    if st.session_state.rag_service is None:
+        st.session_state.rag_service = RAGService(st.session_state.db_service, st.session_state.activity_service)
+
+    # Generate session ID for activity tracking
+    if st.session_state.session_id is None:
+        st.session_state.session_id = str(uuid.uuid4())
 
 
-# Role-based theming
-def apply_role_theme(role):
-    """Apply custom CSS based on user role"""
-    themes = {
-        'student': {
-            'primary': '#1E88E5',
-            'secondary': '#42A5F5',
-            'accent': '#E3F2FD',
-            'text': '#0D47A1'
-        },
-        'teacher': {
-            'primary': '#43A047',
-            'secondary': '#66BB6A',
-            'accent': '#E8F5E8',
-            'text': '#1B5E20'
-        },
-        'parent': {
-            'primary': '#FB8C00',
-            'secondary': '#FFB74D',
-            'accent': '#FFF3E0',
-            'text': '#E65100'
-        }
-    }
-
-    if role in themes:
-        theme = themes[role]
-        st.markdown(f"""
-        <style>
-        .stApp {{
-            background: linear-gradient(135deg, {theme['accent']} 0%, #ffffff 100%);
-        }}
-        .stButton > button {{
-            background: {theme['primary']};
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-weight: 600;
-        }}
-        .stButton > button:hover {{
-            background: {theme['secondary']};
-        }}
-        .stSelectbox > div > div {{
-            background: {theme['accent']};
-        }}
-        .role-header {{
-            background: {theme['primary']};
-            color: white;
-            padding: 1rem;
-            border-radius: 8px;
-            margin-bottom: 1rem;
-            text-align: center;
-            font-size: 1.2rem;
-            font-weight: bold;
-        }}
-        .metric-card {{
-            background: {theme['accent']};
-            padding: 1rem;
-            border-radius: 8px;
-            border-left: 4px solid {theme['primary']};
-            margin: 0.5rem 0;
-        }}
-        .logout-btn {{
-            background: #dc3545 !important;
-            color: white !important;
-            border: none !important;
-            border-radius: 8px !important;
-            padding: 0.5rem 1rem !important;
-            font-weight: 600 !important;
-        }}
-        .logout-btn:hover {{
-            background: #c82333 !important;
-        }}
-        </style>
-        """, unsafe_allow_html=True)
+# Role-based theming moved to ui/components.py
 
 
 class VideoProcessor:
@@ -599,15 +562,8 @@ class RAGVectorStore:
     def add_documents(self, documents: List[str], metadata: List[Dict] = None):
         """Add documents to vector store with metadata and context caching"""
         try:
-            # Initialize context cache if not exists
-            if not hasattr(st.session_state, 'context_cache'):
-                st.session_state.context_cache = ContextCache(self.embedding_model)
-
-            # Apply context caching to documents
-            cached_documents = []
-            for doc in documents:
-                cached_doc = st.session_state.context_cache.get_chunk(doc)
-                cached_documents.append(cached_doc)
+            # Use documents directly (removed context cache complexity)
+            cached_documents = documents
 
             with st.spinner("Creating embeddings..."):
                 # Generate embeddings for cached documents
@@ -647,7 +603,7 @@ class RAGVectorStore:
             distances, indices = self.index.search(query_embedding.astype('float32'), search_k)
 
             results = []
-            for i, (distance, idx) in enumerate(zip(distances[0], indices[0])):
+            for distance, idx in zip(distances[0], indices[0]):
                 if idx < len(self.documents):
                     # Convert distance to relevance score
                     relevance_score = 1.0 / (1.0 + distance)
@@ -671,7 +627,7 @@ class RAGVectorStore:
 
 
 class GroundedGeminiChatbot:
-    """Enhanced RAG Chatbot with strict grounding and extended responses"""
+    """AERO - AI Educational Response Oracle with intelligent grounding"""
 
     def __init__(self, api_key: str, grounding_validator: GroundingValidator):
         try:
@@ -760,8 +716,7 @@ I can only provide answers based on the documents you've provided to me."""
 
         return f"I cannot provide a complete answer to your question about '{query}' based on the available context. The information in my knowledge base may not be sufficient or directly relevant to your specific question. Please try rephrasing your question or providing more specific documents."
 
-    def generate_response(self, query: str, context: str = "", conversation_history: List[Dict] = None) -> Dict[
-        str, Any]:
+    def generate_response(self, query: str, context: str = "") -> Dict[str, Any]:
         """Generate grounded response with validation - EXTENDED LENGTH (4096 tokens)"""
         try:
             if not self.client:
@@ -801,7 +756,7 @@ I can only provide answers based on the documents you've provided to me."""
 
 def authenticate_user():
     """Fixed authentication function for latest streamlit-authenticator"""
-    st.markdown('<div class="role-header">🔐 Advanced RAG Chatbot - Multi-User Login</div>', unsafe_allow_html=True)
+    st.markdown('<div class="role-header">🚀 AERO - AI Educational Assistant</div>', unsafe_allow_html=True)
 
     # Get user configuration
     config = create_user_config()
@@ -932,86 +887,11 @@ def get_api_key():
     return False
 
 
-def document_upload_section():
-    """Enhanced document upload with video support and updated student limits"""
-    st.sidebar.header("📁 Knowledge Base Management")
-
-    # **UPDATED: Modified student limits as requested**
-    upload_limits = {
-        'student': {'files': 10},  # Changed from 5 files and removed size limit
-        'teacher': {'files': 20, 'size': '50MB'},
-        'parent': {'files': 10, 'size': '25MB'}
-    }
-
-    role = st.session_state.user_role
-    limit = upload_limits.get(role, {'files': 10})
-
-    # **UPDATED: Display new limits**
-    if role == 'student':
-        st.sidebar.info(f"📊 **{role.title()} Limits:**\n- Max files: {limit['files']}")
-    else:
-        st.sidebar.info(f"📊 **{role.title()} Limits:**\n- Max files: {limit['files']}\n- Max size: {limit['size']}")
-
-    # File upload tabs
-    tab1, tab2, tab3 = st.sidebar.tabs(["📄 Documents", "🎥 Videos", "🌐 YouTube"])
-
-    with tab1:
-        uploaded_files = st.file_uploader(
-            "Upload Documents",
-            accept_multiple_files=True,
-            type=['pdf', 'txt'],
-            help="Upload PDF or TXT files"
-        )
-
-        if uploaded_files and st.button("🔄 Process Documents", key="process_docs"):
-            process_documents(uploaded_files)
-
-    with tab2:
-        uploaded_videos = st.file_uploader(
-            "Upload Videos",
-            accept_multiple_files=True,
-            type=['mp4', 'avi', 'mov', 'mkv', 'webm'],
-            help="Upload video files for transcription"
-        )
-
-        if uploaded_videos and st.button("🎬 Process Videos", key="process_videos"):
-            process_videos(uploaded_videos)
-
-    with tab3:
-        youtube_url = st.text_input(
-            "YouTube URL",
-            placeholder="https://www.youtube.com/watch?v=...",
-            help="Enter YouTube video URL"
-        )
-
-        if youtube_url and st.button("📺 Process YouTube", key="process_youtube"):
-            process_youtube(youtube_url)
-
-    # Display current knowledge base
-    if st.session_state.documents:
-        st.sidebar.subheader("📚 Current Knowledge Base")
-        st.sidebar.info(f"Total chunks: {len(st.session_state.documents)}")
-
-        # Grounding settings
-        st.sidebar.subheader("🎯 Grounding Settings")
-        st.session_state.grounding_threshold = st.sidebar.slider(
-            "Confidence Threshold",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.7,
-            step=0.1,
-            help="Higher values require stronger grounding"
-        )
-
-        if st.sidebar.button("🗑️ Clear Knowledge Base"):
-            st.session_state.documents = []
-            st.session_state.vector_store = RAGVectorStore(st.session_state.embeddings_model)
-            st.sidebar.success("Knowledge base cleared!")
-            st.rerun()
+# Document upload section moved to ui/components.py - use render_document_upload_section()
 
 
-def process_documents(uploaded_files):
-    """Process uploaded documents"""
+def process_documents_admin(uploaded_files):
+    """Process uploaded documents (Admin only) - shared knowledge base"""
     processor = DocumentProcessor()
     all_chunks = []
     metadata = []
@@ -1057,7 +937,7 @@ def process_documents(uploaded_files):
     progress_bar.empty()
 
 
-def process_videos(uploaded_videos):
+def process_videos_admin(uploaded_videos):
     """Process uploaded video files"""
     processor = DocumentProcessor()
     all_chunks = []
@@ -1098,7 +978,7 @@ def process_videos(uploaded_videos):
     progress_bar.empty()
 
 
-def process_youtube(youtube_url):
+def process_youtube_admin(youtube_url):
     """FIXED: Process YouTube video with proper spinner usage and better error handling"""
     processor = DocumentProcessor()
 
@@ -1130,14 +1010,8 @@ def process_youtube(youtube_url):
 
 
 def chat_interface():
-    """Enhanced chat interface with role-based features and extended responses"""
-    role = st.session_state.user_role
-
-    # Role-based header
-    role_emojis = {'student': '📚', 'teacher': '👨‍🏫', 'parent': '👨‍👩‍👧‍👦'}
-    emoji = role_emojis.get(role, '🤖')
-
-    st.header(f"{emoji} Chat with Your Knowledge Base - {role.title()} Mode")
+    """AERO chat interface - clean and focused"""
+    # Simple, clean interface - no unnecessary headers
 
     # Initialize components
     if 'grounding_validator' not in st.session_state:
@@ -1194,178 +1068,111 @@ def chat_interface():
     }
 
     # Chat input
-    if prompt := st.chat_input(prompts.get(role, "Ask me anything...")):
-        # Add user message
-        st.session_state.messages.append({"role": "user", "content": prompt})
+    # Make sure prompts exists
+prompts = prompts if 'prompts' in locals() else {}
 
-        # Display user message
-        with st.chat_message("user"):
-            st.markdown(prompt)
+# Chat input (placeholder pulled from prompts["user"] if available)
+if prompt := st.chat_input(prompts.get("user", "Ask me anything...")):
+    # Add user message
+    st.session_state.messages.append({"role": "user", "content": prompt})
 
-        # Generate response
-        with st.chat_message("assistant"):
-            with st.spinner("Generating comprehensive response..."):
-                # Search for relevant documents with extended context
-                context = ""
-                sources = []
+    # Display user message
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-                if st.session_state.vector_store and st.session_state.documents:
-                    search_results = st.session_state.vector_store.search(
-                        prompt,
-                        k=5,  # Increased from 3 to 5 for more comprehensive context
-                        relevance_threshold=0.3
-                    )
-                    if search_results:
-                        context = "\n\n".join([result["content"] for result in search_results])
-                        sources = search_results
+    # Generate response using RAG service
+    with st.chat_message("assistant"):
+        with st.spinner("Generating comprehensive response..."):
+            current_user = st.session_state.current_user
 
-                # Generate grounded response with extended length capability
-                response_data = st.session_state.chatbot.generate_response(
-                    prompt,
-                    context,
-                    st.session_state.messages
-                )
+            response_data = st.session_state.rag_service.generate_response_with_logging(
+                prompt,
+                current_user,
+                st.session_state.session_id,
+                st.session_state.chatbot,
+                st.session_state.vector_store
+            )
 
-                response = response_data['response']
-                grounding_result = response_data['grounding_result']
-                is_fallback = response_data['is_fallback']
+            response = response_data['response']
+            grounding_result = response_data.get('grounding_result')
+            is_fallback = response_data.get('is_fallback', False)
+            sources = response_data.get('sources', [])
+            is_cached = response_data.get('is_cached', False)
 
-                # Display response with enhanced formatting
-                st.markdown(response, unsafe_allow_html=True)
+            # Show cache indicator
+            if is_cached:
+                st.info("⚡ Cached response for faster performance")
 
-                # Show grounding information
-                if grounding_result:
-                    # Color code based on grounding quality
-                    if grounding_result['confidence'] >= 0.8:
-                        confidence_color = "🟢"
-                    elif grounding_result['confidence'] >= 0.6:
-                        confidence_color = "🟡"
+            # Display response with enhanced formatting
+            st.markdown(response, unsafe_allow_html=True)
+
+            # Show grounding information using modular component
+            from ui.components import render_grounding_info, render_sources_info
+            render_grounding_info(grounding_result)
+
+            # Show fallback warning if needed
+            if is_fallback:
+                st.warning("⚠️ Fallback response used due to poor grounding")
+
+            # Display sources using modular component
+            if sources:
+                formatted_sources = []
+                for source in sources:
+                    if isinstance(source, dict):
+                        formatted_sources.append(source)
                     else:
-                        confidence_color = "🔴"
+                        formatted_sources.append({
+                            'content': str(source),
+                            'metadata': {'source_file': 'Unknown', 'source_type': 'document'},
+                            'relevance_score': 0.5
+                        })
+                render_sources_info(formatted_sources)
 
-                    st.markdown(f"{confidence_color} **Grounding Confidence:** {grounding_result['confidence']:.2f}")
+    # Add assistant message to chat history
+    assistant_message = {
+        "role": "assistant",
+        "content": response,
+        "grounding_result": grounding_result,
+        "is_fallback": is_fallback
+    }
+    if sources:
+        assistant_message["sources"] = sources
+    st.session_state.messages.append(assistant_message)
 
-                    with st.expander("🔍 Grounding Details"):
-                        st.write(f"**Well Grounded:** {'Yes' if grounding_result['is_grounded'] else 'No'}")
-                        st.write(f"**Text Overlap:** {grounding_result['text_overlap']:.2f}")
-                        st.write(f"**Semantic Similarity:** {grounding_result['semantic_similarity']:.2f}")
-                        st.write(f"**Reason:** {grounding_result['reason']}")
-                        if is_fallback:
-                            st.warning("⚠️ Fallback response used due to poor grounding")
-
-                # Display sources if available
-                if sources:
-                    with st.expander("📚 Sources"):
-                        for i, source in enumerate(sources):
-                            st.markdown(f"**Source {i + 1}** (Relevance: {source['relevance_score']:.2f})")
-                            st.markdown(f"*Type:* {source['metadata'].get('source_type', 'Unknown')}")
-                            st.markdown(f"*File:* {source['metadata'].get('source_file', 'Unknown')}")
-                            st.code(
-                                source['content'][:300] + "..." if len(source['content']) > 300 else source['content'])
-
-        # Add assistant message
-        assistant_message = {
-            "role": "assistant",
-            "content": response,
-            "grounding_result": grounding_result,
-            "is_fallback": is_fallback
-        }
-        if sources:
-            assistant_message["sources"] = sources
-        st.session_state.messages.append(assistant_message)
 
 
 def sidebar_controls():
-    """Enhanced sidebar controls with WORKING AUTO-REDIRECT LOGOUT"""
-    st.sidebar.header("⚙️ Settings")
-
-    # ### FIXED LOGOUT - With automatic redirect to login page
-    if (
-            st.session_state.get("authenticated") and
-            st.session_state.get("authentication_status") and
-            st.session_state.get("authenticator")
-    ):
-        # Store previous authentication status to detect logout
-        prev_auth_status = st.session_state.get("authentication_status")
-
-        st.sidebar.markdown("---")
-        # Use the official logout method from streamlit-authenticator
-        st.session_state.authenticator.logout('🚪 Logout', 'sidebar')
-        st.sidebar.markdown("---")
-
-        # Check if user has been logged out and redirect to login page
-        if prev_auth_status and not st.session_state.get("authentication_status"):
-            # Clear all session state data
-            st.session_state.authenticated = False
-            st.session_state.username = None
-            st.session_state.name = None
-            st.session_state.user_role = None
-
-            # Show logout success message
-            st.sidebar.success("✅ Successfully logged out!")
-
-            # Force page refresh to show login screen
-            time.sleep(0.5)  # Brief delay to show message
-            st.rerun()
-
+    """Clean AERO sidebar controls"""
     # User info (only show if authenticated)
-    if st.session_state.get("authenticated"):
+    if st.session_state.get("authenticated") and st.session_state.get("current_user"):
+        user = st.session_state.current_user
         st.sidebar.markdown(f"""
-        <div class="metric-card">
-            <strong>👤 User:</strong> {st.session_state.name}<br>
-            <strong>🎭 Role:</strong> {st.session_state.user_role.title()}<br>
-            <strong>📧 Session:</strong> Active
+        <div style="padding: 15px; background: #f8f9fa; border-radius: 8px; margin: 10px 0;">
+            <strong>👤 {user.name}</strong><br>
+            <small style="color: #666;">{user.role.value.title()}</small>
         </div>
         """, unsafe_allow_html=True)
 
-    # Custom logout helper
-    if st.sidebar.button("🚪 Quick Logout"):
-        logout_user()
-        for key in ['authenticated', 'username', 'name', 'user_role', 'authentication_status']:
+    # Clean logout button
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🚪 Logout", type="secondary"):
+        # Clear session state directly
+        for key in ['authenticated', 'username', 'name', 'user_role', 'authentication_status', 'current_user']:
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()
 
 
-    # Model information
-    with st.sidebar.expander("🤖 Model Info"):
-        st.info("""
-        **Model:** Gemini 2.0 Flash
-        **Max Tokens:** 4096 (Extended)
-        **Embedding:** all-MiniLM-L6-v2
-        **Vector Store:** FAISS
-        **Grounding:** Strict Document-Only
-        **Video:** faster-whisper (FFmpeg-free)
-        **YouTube:** yt-dlp (FFmpeg-free)
-        """)
+    # Clean model info (collapsed by default)
+    with st.sidebar.expander("ℹ️ About AERO"):
+        st.info("**AERO** - AI Educational Response Oracle\nIntelligent learning assistant powered by advanced AI.")
 
-    # Chat statistics (only show if authenticated and have messages)
+    # Simple session stats (optional)
     if st.session_state.get("authenticated") and st.session_state.messages:
-        st.sidebar.header("📊 Chat Statistics")
-
-        grounded_responses = 0
-        total_responses = 0
-        avg_confidence = 0
-
-        for message in st.session_state.messages:
-            if message["role"] == "assistant" and "grounding_result" in message:
-                total_responses += 1
-                if message["grounding_result"] and message["grounding_result"]["is_grounded"]:
-                    grounded_responses += 1
-                if message["grounding_result"]:
-                    avg_confidence += message["grounding_result"]["confidence"]
-
-        if total_responses > 0:
-            grounding_rate = (grounded_responses / total_responses) * 100
-            avg_confidence = avg_confidence / total_responses
-
-            col1, col2 = st.sidebar.columns(2)
-            with col1:
-                st.metric("Grounding Rate", f"{grounding_rate:.1f}%")
-            with col2:
-                st.metric("Avg Confidence", f"{avg_confidence:.2f}")
-
-            st.sidebar.metric("Total Messages", len(st.session_state.messages))
+        total_messages = len([m for m in st.session_state.messages if m["role"] == "user"])
+        if total_messages > 0:
+            with st.sidebar.expander(f"💬 {total_messages} questions asked"):
+                st.write("✅ Session active")
 
     # Controls (only show if authenticated)
     if st.session_state.get("authenticated"):
@@ -1416,58 +1223,23 @@ def export_chat():
 
 
 def main():
-    """Main application logic"""
+    """Main application logic with modular authentication"""
+    
+    # Initialize session state first
+    initialize_session_state()
+    
+    # Create demo users on first run
+    from ui.auth_page import create_demo_users
+    create_demo_users(st.session_state.auth_service)
 
     # Apply role-based theme if authenticated
-    if st.session_state.authenticated:
-        apply_role_theme(st.session_state.user_role)
+    if st.session_state.authenticated and st.session_state.current_user:
+        apply_role_theme(st.session_state.current_user.role.value)
 
     # Check authentication - if not authenticated, show login and stop
     if not st.session_state.authenticated:
-        choice = st.sidebar.radio("Choose action", ["Log In", "Sign Up"])
-        if choice == "Sign Up":
-            # Show signup form
-            with st.form("signup_form", clear_on_submit=True):
-                new_username = st.text_input("Username")
-                new_name = st.text_input("Full Name")
-                new_email = st.text_input("Email Address")
-                new_password = st.text_input("Password", type="password")
-                confirm_password = st.text_input("Confirm Password", type="password")
-                role = st.selectbox("Role", ["student", "teacher", "parent"])
-                submitted = st.form_submit_button("Sign Up")
-
-            if submitted:
-                try:
-                    form_data = {
-                        "username": new_username,
-                        "name": new_name,
-                        "email": new_email,
-                        "password": new_password,
-                        "confirm_password": confirm_password,
-                        "role": role
-                    }
-                    if signup_user(form_data):
-                        st.success("Account created! Please log in.")
-                        st.rerun()
-                except ValueError as e:
-                    st.error(str(e))
-        else:
-            # Show login form
-            with st.form("login_form"):
-                username = st.text_input("Username")
-                password = st.text_input("Password", type="password")
-                login_submitted = st.form_submit_button("Login")
-
-            if login_submitted:
-                try:
-                    user_info = login_user(username, password)
-                    st.session_state.authenticated = True
-                    st.session_state.username = user_info["username"]
-                    st.session_state.name = user_info["name"]
-                    st.session_state.user_role = user_info["role"]
-                    st.rerun()
-                except ValueError as e:
-                    st.error(str(e))
+        from ui.auth_page import render_auth_page
+        render_auth_page(st.session_state.auth_service)
         return
 
     # Initialize models
@@ -1479,15 +1251,44 @@ def main():
     if not get_api_key():
         return
 
-    # Main interface
-    col1, col2 = st.columns([3, 1])
+    # Render role-specific header
+    current_user = st.session_state.current_user
+    render_role_header(current_user.role.value, current_user.name)
+    
+    # Role-specific main interface
+    if current_user.role == UserRole.PARENT:
+        # Parent dashboard with sidebar
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            render_parent_dashboard(current_user, st.session_state.activity_service)
+        
+        with col2:
+            render_user_info_sidebar(current_user)
+            sidebar_controls()
+    
+    elif current_user.role == UserRole.TEACHER:
+        # Teacher analytics dashboard
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            render_teacher_dashboard(current_user, st.session_state.activity_service)
+        
+        with col2:
+            render_user_info_sidebar(current_user)
+            sidebar_controls()
+    
+    else:
+        # Main chat interface for admin and student
+        col1, col2 = st.columns([3, 1])
 
-    with col1:
-        chat_interface()
+        with col1:
+            chat_interface()
 
-    with col2:
-        document_upload_section()
-        sidebar_controls()
+        with col2:
+            render_document_upload_section(current_user, st.session_state.document_service)
+            render_user_info_sidebar(current_user)
+            sidebar_controls()
 
     # Role-based footer
     role_footers = {
@@ -1496,13 +1297,11 @@ def main():
         'parent': '👨‍👩‍👧‍👦 Family Learning Support'
     }
 
+    # Clean footer
     st.markdown("---")
     st.markdown(f"""
-    <div style='text-align: center; color: #666; padding: 20px;'>
-        <p>🎯 <strong>{role_footers.get(st.session_state.user_role, 'Advanced RAG Chatbot')}</strong></p>
-        <p>🤖 Powered by Gemini 2.0 Flash • 🎥 Video Support • 🔒 Multi-User Authentication</p>
-        <p>📝 Strict Grounding • 🚫 No FFmpeg Required • 🎯 Role-Based Access • 📤 Unlimited File Size</p>
-        <p>✨ Extended Responses (4096 tokens) • 🚪 Auto-Redirect Logout • 📊 Enhanced Analytics</p>
+    <div style='text-align: center; color: #999; padding: 10px;'>
+        <p>🚀 <strong>AERO</strong> - AI Educational Assistant</p>
     </div>
     """, unsafe_allow_html=True)
 
