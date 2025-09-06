@@ -17,7 +17,7 @@ pandas>=2.0.0
 
 # PostgreSQL & Redis Dependencies
 asyncpg==0.28.0
-psycopg2-binary==2.9.8
+psycopg2-binary
 redis[hiredis]==5.0.1
 sqlalchemy[asyncio]==2.0.23
 alembic==1.12.1
@@ -30,5 +30,6 @@ prometheus-client==0.19.0
 # Additional Utils
 python-dotenv==1.0.0
 tenacity==8.2.3
+
 
 
