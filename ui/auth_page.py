@@ -8,7 +8,51 @@ from services.auth_service import AuthService
 
 def render_auth_page(auth_service: AuthService):
     """Render authentication page with login and signup"""
-    st.markdown('<div class="role-header">🔐 Digital Companion - Multi-User Portal</div>', unsafe_allow_html=True)
+
+    # CSS for styling the header and global font sizes
+    st.markdown("""
+        <style>
+            .role-header {
+                text-align: center;
+                font-size: 3rem;
+                font-weight: 700;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                margin-bottom: 1.5rem;
+                color: #333333;
+            }
+            /* Increase base font size */
+            html, body, [class*="css"]  {
+                font-size: 18px !important;
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
+            }
+            /* Subheader */
+            .st-subheader {
+                font-size: 1.8rem !important;
+                font-weight: 600 !important;
+            }
+            /* Info, warning, error messages and buttons */
+            .st-info, .st-warning, .st-error, .st-success {
+                font-size: 1.15rem !important;
+            }
+            button[data-baseweb="button"] {
+                font-size: 1.1rem !important;
+                font-weight: 600 !important;
+            }
+            /* Form labels */
+            label[data-baseweb="label"] {
+                font-size: 1.1rem !important;
+                font-weight: 600;
+            }
+            /* Expander summary */
+            .streamlit-expanderHeader {
+                font-size: 1.3rem !important;
+                font-weight: 600 !important;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Updated header with new text
+    st.markdown('<div class="role-header">🔐 Digital Companion - Aero Chatbot</div>', unsafe_allow_html=True)
     
     # Demo credentials info
     with st.expander("🔍 Demo Credentials"):
@@ -29,6 +73,8 @@ def render_auth_page(auth_service: AuthService):
     with tab2:
         render_signup_form(auth_service)
 
+# The rest of the code remains unchanged...
+
 def render_login_form(auth_service: AuthService):
     """Render login form"""
     with st.form("login_form"):
@@ -36,7 +82,6 @@ def render_login_form(auth_service: AuthService):
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
         login_submitted = st.form_submit_button("🔑 Login")
-
     if login_submitted:
         if username and password:
             try:
@@ -90,7 +135,6 @@ def render_signup_form(auth_service: AuthService):
             )
         
         submitted = st.form_submit_button("📝 Create Account")
-
     if submitted:
         try:
             # Validation
